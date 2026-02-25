@@ -1,0 +1,8 @@
+meta/
+cookies.txt
+.env
+.env.local
+*.pyc
+__pycache__/
+.vscode/
+.venv/
