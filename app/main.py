@@ -5,6 +5,7 @@ from app.routers.auth import router as auth_router
 from app.routers.me import router as me_router
 from app.routers.interests import router as interests_router
 from app.routers.targets import router as targets_router
+from app.routers.exports import router as exports_router
 
 app = FastAPI(title="Polymath Focus API")
 
@@ -20,6 +21,7 @@ app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(interests_router)
 app.include_router(targets_router)
+app.include_router(exports_router)
 
 
 @app.get("/health")
