@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, func
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import and_, func, case
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.models.interest import Interest, FocusStint, PauseInterval
+from app.models.target import Target, TargetBullet, Todo
 from app.schemas.interest import (
     InterestCreate,
     InterestOut,
@@ -14,6 +15,17 @@ from app.schemas.interest import (
     FocusStintOut,
     PauseIntervalOut,
 )
+from app.schemas.tree import (
+    InterestTreeCountsOut,
+    TargetWithCountsOut,
+    BulletOut,
+    TodoCounts,
+    InterestExportOut,
+    TargetExportOut,
+    GroupedTodosOut,
+    TodoOut,
+)
+
 
 router = APIRouter(prefix="/interests", tags=["interests"])
 
@@ -369,3 +381,204 @@ def timeline(
             )
         )
     return out
+
+
+@router.get("/{interest_id}/tree", response_model=InterestTreeCountsOut)
+def get_interest_tree_with_counts(
+    interest_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    interest = (
+        db.query(Interest)
+        .filter(Interest.id == interest_id, Interest.user_id == user.id)
+        .first()
+    )
+    if not interest:
+        raise HTTPException(status_code=404, detail="Interest not found")
+
+    if interest.status != "FOCUS":
+        raise HTTPException(
+            status_code=403,
+            detail="Only focus interests can be fetched via this endpoint",
+        )
+
+    targets = (
+        db.query(Target)
+        .filter(Target.interest_id == interest.id)
+        .order_by(Target.sort_order.asc(), Target.updated_at.desc())
+        .all()
+    )
+    target_ids = [t.id for t in targets]
+
+    bullets_by_target: dict[str, list[BulletOut]] = {str(tid): [] for tid in target_ids}
+    if target_ids:
+        bullets = (
+            db.query(TargetBullet)
+            .filter(TargetBullet.target_id.in_(target_ids))
+            .order_by(
+                TargetBullet.target_id.asc(),
+                TargetBullet.sort_order.asc(),
+                TargetBullet.updated_at.desc(),
+            )
+            .all()
+        )
+        for b in bullets:
+            bullets_by_target[str(b.target_id)].append(
+                BulletOut(
+                    id=str(b.id),
+                    content=b.content,
+                    category=b.category,
+                    sort_order=b.sort_order,
+                )
+            )
+
+    counts_by_target: dict[str, TodoCounts] = {
+        str(tid): TodoCounts(active=0, backlog=0, done=0) for tid in target_ids
+    }
+    if target_ids:
+        rows = (
+            db.query(
+                Todo.target_id.label("target_id"),
+                func.sum(case((Todo.status == "ACTIVE", 1), else_=0)).label("active"),
+                func.sum(case((Todo.status == "BACKLOG", 1), else_=0)).label("backlog"),
+                func.sum(case((Todo.status == "DONE", 1), else_=0)).label("done"),
+            )
+            .filter(Todo.target_id.in_(target_ids))
+            .group_by(Todo.target_id)
+            .all()
+        )
+        for r in rows:
+            counts_by_target[str(r.target_id)] = TodoCounts(
+                active=int(r.active or 0),
+                backlog=int(r.backlog or 0),
+                done=int(r.done or 0),
+            )
+
+    out_targets: list[TargetWithCountsOut] = []
+    for t in targets:
+        out_targets.append(
+            TargetWithCountsOut(
+                id=str(t.id),
+                name=t.name,
+                sort_order=t.sort_order,
+                bullets=bullets_by_target.get(str(t.id), []),
+                todo_counts=counts_by_target.get(
+                    str(t.id), TodoCounts(active=0, backlog=0, done=0)
+                ),
+            )
+        )
+
+    return InterestTreeCountsOut(
+        id=str(interest.id),
+        name=interest.name,
+        status=interest.status,
+        focus_state=interest.focus_state,
+        targets=out_targets,
+        updated_at=getattr(interest, "updated_at", None),
+    )
+
+
+@router.get("/{interest_id}/export", response_model=InterestExportOut)
+def export_interest_tree_for_pdf(
+    interest_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    interest = (
+        db.query(Interest)
+        .filter(Interest.id == interest_id, Interest.user_id == user.id)
+        .first()
+    )
+    if not interest:
+        raise HTTPException(status_code=404, detail="Interest not found")
+
+    if interest.status != "FOCUS":
+        raise HTTPException(
+            status_code=403, detail="Only focus interests can be exported"
+        )
+
+    targets = (
+        db.query(Target)
+        .filter(Target.interest_id == interest.id)
+        .order_by(Target.sort_order.asc(), Target.updated_at.desc())
+        .all()
+    )
+    target_ids = [t.id for t in targets]
+
+    bullets_map: dict[str, list[BulletOut]] = {str(tid): [] for tid in target_ids}
+    if target_ids:
+        bullets = (
+            db.query(TargetBullet)
+            .filter(TargetBullet.target_id.in_(target_ids))
+            .order_by(
+                TargetBullet.target_id.asc(),
+                TargetBullet.sort_order.asc(),
+                TargetBullet.updated_at.desc(),
+            )
+            .all()
+        )
+        for b in bullets:
+            bullets_map[str(b.target_id)].append(
+                BulletOut(
+                    id=str(b.id),
+                    content=b.content,
+                    category=b.category,
+                    sort_order=b.sort_order,
+                )
+            )
+
+    todos_map: dict[str, GroupedTodosOut] = {
+        str(tid): GroupedTodosOut(active=[], backlog=[], done=[]) for tid in target_ids
+    }
+    totals = TodoCounts(active=0, backlog=0, done=0)
+
+    if target_ids:
+        todos = (
+            db.query(Todo)
+            .filter(Todo.target_id.in_(target_ids))
+            .order_by(Todo.target_id.asc(), Todo.created_at.desc())
+            .all()
+        )
+        for td in todos:
+            item = TodoOut(
+                id=str(td.id),
+                status=td.status,
+                content=td.content,
+                created_at=td.created_at,
+                done_at=td.done_at,
+            )
+            bucket = todos_map[str(td.target_id)]
+            if td.status == "ACTIVE":
+                bucket.active.append(item)
+                totals.active += 1
+            elif td.status == "BACKLOG":
+                bucket.backlog.append(item)
+                totals.backlog += 1
+            else:
+                bucket.done.append(item)
+                totals.done += 1
+
+    out_targets: list[TargetExportOut] = []
+    for t in targets:
+        out_targets.append(
+            TargetExportOut(
+                id=str(t.id),
+                name=t.name,
+                sort_order=t.sort_order,
+                bullets=bullets_map.get(str(t.id), []),
+                todos=todos_map.get(
+                    str(t.id), GroupedTodosOut(active=[], backlog=[], done=[])
+                ),
+            )
+        )
+
+    return InterestExportOut(
+        id=str(interest.id),
+        name=interest.name,
+        status=interest.status,
+        focus_state=interest.focus_state,
+        exported_at=datetime.now(timezone.utc),
+        targets=out_targets,
+        totals=totals,
+    )

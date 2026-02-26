@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,9 @@ from app.schemas.target import (
     TodoEdit,
     TodoOut,
 )
+
+
+from app.schemas.tree import TargetDetailOut, BulletOut, GroupedTodosOut, TodoOut
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -449,4 +452,70 @@ def move_todo(
         content=todo.content,
         created_at=todo.created_at,
         done_at=todo.done_at,
+    )
+
+
+@router.get("/{target_id}/detail", response_model=TargetDetailOut)
+def get_target_detail(
+    target_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target = (
+        db.query(Target)
+        .join(Interest, Interest.id == Target.interest_id)
+        .filter(Target.id == target_id, Interest.user_id == user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    bullets = (
+        db.query(TargetBullet)
+        .filter(TargetBullet.target_id == target.id)
+        .order_by(TargetBullet.sort_order.asc(), TargetBullet.updated_at.desc())
+        .all()
+    )
+    bullets_out = [
+        BulletOut(
+            id=str(b.id),
+            content=b.content,
+            category=b.category,
+            sort_order=b.sort_order,
+        )
+        for b in bullets
+    ]
+
+    todos = (
+        db.query(Todo)
+        .filter(Todo.target_id == target.id)
+        .order_by(Todo.created_at.desc())
+        .all()
+    )
+
+    active: list[TodoOut] = []
+    backlog: list[TodoOut] = []
+    done: list[TodoOut] = []
+
+    for t in todos:
+        item = TodoOut(
+            id=str(t.id),
+            status=t.status,
+            content=t.content,
+            created_at=t.created_at,
+            done_at=t.done_at,
+        )
+        if t.status == "ACTIVE":
+            active.append(item)
+        elif t.status == "BACKLOG":
+            backlog.append(item)
+        else:
+            done.append(item)
+
+    return TargetDetailOut(
+        id=str(target.id),
+        interest_id=str(target.interest_id),
+        name=target.name,
+        bullets=bullets_out,
+        todos=GroupedTodosOut(active=active, backlog=backlog, done=done),
     )

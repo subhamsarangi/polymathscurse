@@ -39,7 +39,11 @@ GOOGLE_CLIENT_ID=your_google_oauth_client_id.apps.googleusercontent.com
 ```
 
 ## Run migrations
+```bash
 alembic upgrade head
+```
 
 ## Run server
+```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```

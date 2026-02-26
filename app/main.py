@@ -25,3 +25,8 @@ app.include_router(targets_router)
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "docs": "/docs"}
