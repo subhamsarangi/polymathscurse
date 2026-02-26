@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token as google_id_token
@@ -17,6 +19,8 @@ from app.models.user import User
 from app.schemas.auth import SignupIn, LoginIn, GoogleIn, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+auth_logger = logging.getLogger("app.auth")
 
 ACCESS_COOKIE = "access_token"
 REFRESH_COOKIE = "refresh_token"
@@ -62,6 +66,8 @@ def signup(payload: SignupIn, response: Response, db: Session = Depends(get_db))
 
     existing = db.query(User).filter(User.email == email).first()
     if existing:
+        auth_logger.info("signup_conflict email=%s", email)
+
         raise HTTPException(status_code=409, detail="Email already in use")
 
     user = User(email=email, password_hash=hash_password(payload.password))
@@ -78,14 +84,27 @@ def signup(payload: SignupIn, response: Response, db: Session = Depends(get_db))
 
 
 @router.post("/login", response_model=UserOut)
-def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
+def login(
+    payload: LoginIn,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     email = payload.email.lower().strip()
     user = db.query(User).filter(User.email == email).first()
 
     if not user or not user.password_hash:
+        ip = request.client.host if request.client else "-"
+        ua = (request.headers.get("user-agent") or "-")[:120]
+        auth_logger.info("login_failed no-user email=%s ip=%s ua=%s", email, ip, ua)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not verify_password(payload.password, user.password_hash):
+        ip = request.client.host if request.client else "-"
+        ua = (request.headers.get("user-agent") or "-")[:120]
+        auth_logger.info(
+            "login_failed wrong-password email=%s ip=%s ua=%s", email, ip, ua
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # rotate refresh jti on login
@@ -109,12 +128,16 @@ def google_login(payload: GoogleIn, response: Response, db: Session = Depends(ge
             settings.GOOGLE_CLIENT_ID,
         )
     except Exception:
+        auth_logger.info("google_login_failed reason=invalid_token")
+
         raise HTTPException(status_code=401, detail="Invalid Google token")
 
     sub = idinfo.get("sub")
     email = (idinfo.get("email") or "").lower().strip() or None
 
     if not sub:
+        auth_logger.info("google_login_failed reason=invalid_token")
+
         raise HTTPException(status_code=401, detail="Invalid Google token")
 
     user = db.query(User).filter(User.google_sub == sub).first()
