@@ -7,6 +7,9 @@ from app.routers.interests import router as interests_router
 from app.routers.targets import router as targets_router
 from app.routers.exports import router as exports_router
 from app.routers.admin import router as admin_router
+from app.routers.webhooks import router as webhooks_router
+from app.routers.stripe_checkout import router as stripe_router
+
 
 app = FastAPI(title="Polymath Focus API")
 
@@ -25,6 +28,8 @@ app.include_router(interests_router)
 app.include_router(targets_router)
 app.include_router(exports_router)
 app.include_router(admin_router)
+app.include_router(webhooks_router)
+app.include_router(stripe_router)
 
 
 @app.get("/health")

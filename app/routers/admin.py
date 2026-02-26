@@ -1,6 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, distinct
 from sqlalchemy.orm import Session
 
@@ -117,6 +117,56 @@ def update_export_mode(
 
     # allow setting a promo end time, or clearing it by sending null
     s.free_exports_until = payload.free_exports_until
+
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+
+    return ExportModeOut(
+        free_exports_enabled=s.free_exports_enabled,
+        free_exports_until=s.free_exports_until,
+        exports_free_now=exports_are_free(db),
+    )
+
+
+@router.post("/export-mode/promo", response_model=ExportModeOut)
+def start_export_promo(
+    days: int = Query(0, ge=0, le=3650),
+    hours: int = Query(0, ge=0, le=87600),
+    minutes: int = Query(0, ge=0, le=5256000),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Starts/extends a promo window where exports are free until now + delta.
+    Usage examples:
+      /admin/export-mode/promo?hours=48
+      /admin/export-mode/promo?days=7
+      /admin/export-mode/promo?minutes=90
+      /admin/export-mode/promo?days=1&hours=12
+    """
+    if days == 0 and hours == 0 and minutes == 0:
+        raise HTTPException(
+            status_code=400, detail="Provide at least one of days, hours, minutes"
+        )
+
+    delta = timedelta(days=days, hours=hours, minutes=minutes)
+    now = utcnow()
+
+    s = get_admin_settings(db)
+
+    # If there is an existing promo still active, extend from its end; else from now
+    base = (
+        s.free_exports_until
+        if (s.free_exports_until and s.free_exports_until > now)
+        else now
+    )
+    s.free_exports_until = base + delta
+
+    # Keep manual override separate; promo should work even if manual override is off.
+    # But if manual override was on, you may want promos to be the only control:
+    # set it off to avoid "why is it still free after promo ended?"
+    s.free_exports_enabled = False
 
     db.add(s)
     db.commit()

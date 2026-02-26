@@ -20,6 +20,12 @@ class Settings(BaseSettings):
 
     ADMIN_EMAIL: str
 
+    STRIPE_API_KEY: str
+    STRIPE_WEBHOOK_SECRET: str
+    STRIPE_PRICE_CENTS: int = 100
+    STRIPE_CURRENCY: str = "USD"
+    FRONTEND_URL: str
+
     @property
     def is_prod(self) -> bool:
         return self.ENV.lower() == "prod"
