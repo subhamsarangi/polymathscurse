@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str | None = None
     COOKIE_SECURE: bool = False
 
+    ADMIN_EMAIL: str
+
     @property
     def is_prod(self) -> bool:
         return self.ENV.lower() == "prod"

@@ -6,12 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.deps import get_current_user
+from app.core.feature_flags import exports_are_free, utcnow
 from app.db.session import get_db
 from app.models.user import User
 from app.models.interest import Interest
 from app.models.export import ExportDownload
-
-# Reuse your export payload builder schema
+from app.models.target import Target, TargetBullet, Todo
 from app.schemas.tree import (
     InterestExportOut,
     TargetExportOut,
@@ -20,8 +20,6 @@ from app.schemas.tree import (
     TodoCounts,
     BulletOut,
 )
-from app.models.target import Target, TargetBullet, Todo
-
 from app.schemas.export import ExportCreateOut, ExportStatusOut, ExportTokenOut
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -60,6 +58,27 @@ def create_export_purchase(
     Later: your payment provider webhook will mark it PAID.
     """
     _require_focus_interest(db, str(user.id), interest_id)
+
+    if exports_are_free(db):
+        rec = ExportDownload(
+            user_id=user.id,
+            interest_id=interest_id,
+            status="PAID",
+            amount_cents=0,
+            currency="USD",
+            provider="FREE_MODE",
+            provider_ref=None,
+            paid_at=utcnow(),
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+        return ExportCreateOut(
+            export_id=str(rec.id),
+            status=rec.status,
+            amount_cents=rec.amount_cents,
+            currency=rec.currency,
+        )
 
     rec = ExportDownload(
         user_id=user.id,
