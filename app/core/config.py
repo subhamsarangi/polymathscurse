@@ -6,9 +6,9 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
-    ENV: str = "dev"
+    ENV: str
     JWT_SECRET: str
-    JWT_ISSUER: str = "polymath-api"
+    JWT_ISSUER: str
 
     ACCESS_TTL_MIN: int = 15
     REFRESH_TTL_DAYS: int = 30
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str | None = None
     STRIPE_PRICE_CENTS: int = 100
     STRIPE_CURRENCY: str = "USD"
-    FRONTEND_URL: str
+    FRONTEND_URL: str | None = None
 
     @property
     def is_prod(self) -> bool:
