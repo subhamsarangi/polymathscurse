@@ -1,5 +1,5 @@
 import stripe
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -18,6 +18,11 @@ def create_checkout_session(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if not getattr(settings, "STRIPE_API_KEY", None):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payments unavailable",
+        )
     rec = (
         db.query(ExportDownload)
         .filter(ExportDownload.id == export_id, ExportDownload.user_id == user.id)

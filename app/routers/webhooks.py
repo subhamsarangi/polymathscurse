@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,11 @@ def _utcnow():
 
 @router.post("/stripe")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    if not getattr(settings, "STRIPE_WEBHOOK_SECRET", None):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook not configured",
+        )
     # 1) read raw payload for signature verification
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")

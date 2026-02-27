@@ -1,9 +1,9 @@
 meta/
 cookies.txt
 .env
+.env.prod
 .env.local
 *.pyc
 __pycache__/
 .vscode/
 .venv/
-focus-app-web/
